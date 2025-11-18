@@ -31,3 +31,6 @@ config.json
 
 # Logs
 *.log
+
+# Windows 예약 파일명
+nul

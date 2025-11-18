@@ -4,6 +4,8 @@
 Git Manager - Git 작업을 위한 간단한 GUI 프로그램
 """
 
+__version__ = "2.0"
+
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
 import git
@@ -18,7 +20,7 @@ from datetime import datetime
 class GitManager:
     def __init__(self, root):
         self.root = root
-        self.root.title("Git Manager")
+        self.root.title(f"Git Manager v{__version__}")
         self.root.geometry("800x600")
 
         # 설정

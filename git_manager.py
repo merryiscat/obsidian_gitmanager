@@ -4,7 +4,7 @@
 Git Manager - Git 작업을 위한 간단한 GUI 프로그램
 """
 
-__version__ = "2.0"
+__version__ = "2.3"
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
@@ -15,6 +15,10 @@ import threading
 import schedule
 import time
 from datetime import datetime
+import sys
+import winreg
+from PIL import Image, ImageDraw
+import pystray
 
 
 class GitManager:
@@ -32,8 +36,15 @@ class GitManager:
         self.sync_thread = None
         self.sync_running = False
 
+        # 시스템 트레이
+        self.tray_icon = None
+        self.minimized_to_tray = False
+
         # UI 생성
         self.create_ui()
+
+        # 윈도우 닫기 이벤트 설정
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # 경로가 존재하면 저장소 초기화
         if self.config.get("repo_path"):
@@ -48,7 +59,9 @@ class GitManager:
             "pull_time": "09:00",
             "push_time": "18:00",
             "repositories": [],  # 저장소 리스트: [{"name": "이름", "path": "경로"}, ...]
-            "current_repo_index": -1  # 현재 선택된 저장소 인덱스
+            "current_repo_index": -1,  # 현재 선택된 저장소 인덱스
+            "minimize_to_tray": False,  # 백그라운드 실행 (시스템 트레이)
+            "auto_start": False  # PC 시작 시 자동 실행
         }
 
         if os.path.exists(self.config_file):
@@ -78,13 +91,18 @@ class GitManager:
         top_frame = ttk.Frame(self.root, padding="10")
         top_frame.pack(fill=tk.X)
 
-        # 저장소 경로
+        # 저장소 선택 (드롭다운)
         ttk.Label(top_frame, text="저장소:").pack(side=tk.LEFT, padx=5)
-        self.path_var = tk.StringVar(value=self.config.get("repo_path", ""))
-        path_entry = ttk.Entry(top_frame, textvariable=self.path_var, width=50)
-        path_entry.pack(side=tk.LEFT, padx=5)
+
+        self.repo_combo_var = tk.StringVar()
+        self.repo_combo = ttk.Combobox(top_frame, textvariable=self.repo_combo_var,
+                                       width=50, state="readonly")
+        self.repo_combo.pack(side=tk.LEFT, padx=5)
+        self.repo_combo.bind("<<ComboboxSelected>>", self.on_repo_selected)
 
         ttk.Button(top_frame, text="찾아보기", command=self.browse_folder).pack(side=tk.LEFT, padx=5)
+        ttk.Button(top_frame, text="💾 저장", command=self.save_current_repo).pack(side=tk.LEFT, padx=5)
+        ttk.Button(top_frame, text="🗑️ 삭제", command=self.delete_current_repo).pack(side=tk.LEFT, padx=5)
 
         # 빠른 작업 버튼
         button_frame = ttk.Frame(self.root, padding="10")
@@ -157,49 +175,39 @@ class GitManager:
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text="설정")
 
+        # 커밋 메시지 설정
         ttk.Label(settings_frame, text="커밋 메시지 템플릿:",
-                 font=('Arial', 10, 'bold')).pack(anchor=tk.W, padx=10, pady=10)
+                 font=('Arial', 10, 'bold')).pack(anchor=tk.W, padx=10, pady=(10, 5))
 
         self.commit_msg_var = tk.StringVar(value=self.config.get("commit_message", "update"))
         ttk.Entry(settings_frame, textvariable=self.commit_msg_var, width=50).pack(padx=10, pady=5)
 
+        # 구분선
+        ttk.Separator(settings_frame, orient='horizontal').pack(fill=tk.X, padx=10, pady=20)
+
+        # 프로그램 동작 설정
+        ttk.Label(settings_frame, text="프로그램 동작:",
+                 font=('Arial', 10, 'bold')).pack(anchor=tk.W, padx=10, pady=(0, 10))
+
+        # 백그라운드 실행
+        self.minimize_to_tray_var = tk.BooleanVar(value=self.config.get("minimize_to_tray", False))
+        ttk.Checkbutton(settings_frame, text="닫기 버튼 클릭 시 백그라운드 실행 (시스템 트레이로 최소화)",
+                       variable=self.minimize_to_tray_var).pack(anchor=tk.W, padx=30, pady=5)
+
+        # 자동 시작
+        self.auto_start_var = tk.BooleanVar(value=self.config.get("auto_start", False))
+        ttk.Checkbutton(settings_frame, text="Windows 시작 시 자동 실행",
+                       variable=self.auto_start_var).pack(anchor=tk.W, padx=30, pady=5)
+
+        # 설명 레이블
+        ttk.Label(settings_frame, text="💡 백그라운드 실행: 프로그램을 닫으면 시스템 트레이에서 실행됩니다",
+                 foreground="gray", font=('Arial', 8)).pack(anchor=tk.W, padx=30, pady=(0, 5))
+        ttk.Label(settings_frame, text="💡 자동 실행: PC 부팅 시 Git Manager가 자동으로 시작됩니다",
+                 foreground="gray", font=('Arial', 8)).pack(anchor=tk.W, padx=30, pady=(0, 10))
+
         ttk.Button(settings_frame, text="설정 저장", command=self.save_settings).pack(padx=10, pady=10)
 
-        # 탭 5: 저장소 관리
-        repo_mgmt_frame = ttk.Frame(notebook)
-        notebook.add(repo_mgmt_frame, text="저장소 관리")
-
-        # 상단 버튼 영역
-        repo_btn_frame = ttk.Frame(repo_mgmt_frame)
-        repo_btn_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        ttk.Button(repo_btn_frame, text="➕ 저장소 추가", command=self.add_repository, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(repo_btn_frame, text="➖ 저장소 삭제", command=self.remove_repository, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(repo_btn_frame, text="✓ 선택", command=self.select_repository, width=15).pack(side=tk.LEFT, padx=5)
-
-        # 리스트박스 영역
-        list_frame = ttk.Frame(repo_mgmt_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        ttk.Label(list_frame, text="등록된 저장소:", font=('Arial', 10, 'bold')).pack(anchor=tk.W, padx=5, pady=5)
-
-        # 스크롤바와 리스트박스
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.repo_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=('Arial', 10))
-        self.repo_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.repo_listbox.yview)
-
-        # 전체 작업 버튼 영역
-        all_btn_frame = ttk.Frame(repo_mgmt_frame)
-        all_btn_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        ttk.Label(all_btn_frame, text="전체 저장소 작업:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
-        ttk.Button(all_btn_frame, text="⬇️ All Pull", command=self.pull_all_repos, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(all_btn_frame, text="⬆️ All Push", command=self.push_all_repos, width=15).pack(side=tk.LEFT, padx=5)
-
-        # 탭 6: 로그
+        # 탭 5: 로그
         log_frame = ttk.Frame(notebook)
         notebook.add(log_frame, text="로그")
 
@@ -216,8 +224,8 @@ class GitManager:
         if self.config.get("repo_path"):
             self.log_message(f"저장소: {self.config['repo_path']}", "info")
 
-        # 저장소 리스트 로드
-        self.refresh_repo_list()
+        # 저장소 콤보박스 로드
+        self.refresh_repo_combo()
 
     def browse_folder(self):
         """저장소 폴더 찾아보기"""
@@ -229,9 +237,22 @@ class GitManager:
         """저장소 경로 설정 및 초기화"""
         try:
             self.repo = git.Repo(path)
-            self.path_var.set(path)
             self.config["repo_path"] = path
             self.save_config()
+
+            # 콤보박스 업데이트 - 저장소 리스트에 있으면 선택, 없으면 경로만 표시
+            repositories = self.config.get("repositories", [])
+            found = False
+            for idx, repo in enumerate(repositories):
+                if repo['path'] == path:
+                    self.repo_combo_var.set(f"{repo['name']} - {repo['path']}")
+                    found = True
+                    break
+
+            if not found:
+                # 저장소 리스트에 없으면 경로만 표시
+                self.repo_combo_var.set(path)
+
             self.log_message(f"저장소 로드됨: {path}", "success")
             self.refresh_status()
         except Exception as e:
@@ -240,6 +261,12 @@ class GitManager:
 
     def quick_pull(self):
         """git pull 실행"""
+        # ALL 옵션 선택 시 전체 저장소 Pull
+        selected = self.repo_combo_var.get()
+        if selected == "🌐 ALL":
+            self.pull_all_repos()
+            return
+
         if not self.repo:
             messagebox.showwarning("경고", "먼저 저장소를 선택해주세요")
             return
@@ -257,6 +284,12 @@ class GitManager:
 
     def quick_push(self):
         """git add, commit, push 실행"""
+        # ALL 옵션 선택 시 전체 저장소 Push
+        selected = self.repo_combo_var.get()
+        if selected == "🌐 ALL":
+            self.push_all_repos()
+            return
+
         if not self.repo:
             messagebox.showwarning("경고", "먼저 저장소를 선택해주세요")
             return
@@ -413,6 +446,15 @@ class GitManager:
     def save_settings(self):
         """설정 저장"""
         self.config["commit_message"] = self.commit_msg_var.get()
+        self.config["minimize_to_tray"] = self.minimize_to_tray_var.get()
+        self.config["auto_start"] = self.auto_start_var.get()
+
+        # 자동 시작 설정 적용
+        if self.auto_start_var.get():
+            self.enable_auto_start()
+        else:
+            self.disable_auto_start()
+
         self.save_config()
         messagebox.showinfo("성공", "설정이 저장되었습니다!")
 
@@ -424,113 +466,122 @@ class GitManager:
         self.log_text.see(tk.END)
 
     # 저장소 관리 메서드들
-    def refresh_repo_list(self):
-        """저장소 리스트 새로고침"""
-        self.repo_listbox.delete(0, tk.END)
+    def refresh_repo_combo(self):
+        """저장소 콤보박스 새로고침"""
         repositories = self.config.get("repositories", [])
-        current_index = self.config.get("current_repo_index", -1)
 
-        for idx, repo in enumerate(repositories):
-            display_text = f"{repo['name']} - {repo['path']}"
-            if idx == current_index:
-                display_text = f"★ {display_text}"
-            self.repo_listbox.insert(tk.END, display_text)
+        # 콤보박스 항목 생성
+        items = ["🌐 ALL"]  # ALL 옵션을 맨 위에 추가
+        for repo in repositories:
+            items.append(f"{repo['name']} - {repo['path']}")
+
+        self.repo_combo['values'] = items
+
+        # 현재 선택된 저장소 표시
+        current_path = self.config.get("repo_path", "")
+        if current_path:
+            for idx, repo in enumerate(repositories):
+                if repo['path'] == current_path:
+                    self.repo_combo_var.set(items[idx + 1])  # +1 because of ALL option
+                    break
+        elif items:
+            self.repo_combo_var.set(items[0])  # 기본값: ALL
 
         self.log_message(f"저장소 리스트 새로고침됨 (총 {len(repositories)}개)", "info")
 
-    def add_repository(self):
-        """저장소 추가"""
-        folder = filedialog.askdirectory(title="추가할 Git 저장소 선택")
-        if not folder:
+    def on_repo_selected(self, event=None):
+        """저장소 선택 콜백"""
+        selected = self.repo_combo_var.get()
+
+        if not selected or selected == "🌐 ALL":
+            # ALL 선택 시 현재 저장소 초기화
+            self.repo = None
+            self.config["repo_path"] = ""
+            self.save_config()
+            self.log_message("ALL 모드: 전체 저장소 작업 가능", "info")
+            return
+
+        # 선택된 저장소 찾기
+        repositories = self.config.get("repositories", [])
+        for repo_info in repositories:
+            display_text = f"{repo_info['name']} - {repo_info['path']}"
+            if selected == display_text:
+                self.set_repo_path(repo_info['path'])
+                self.log_message(f"저장소 선택됨: {repo_info['name']}", "success")
+                break
+
+    def save_current_repo(self):
+        """현재 표시된 경로를 저장소 리스트에 저장"""
+        current_path = self.config.get("repo_path", "")
+        if not current_path:
+            messagebox.showwarning("경고", "먼저 저장소를 선택해주세요 (찾아보기 버튼 사용)")
             return
 
         # Git 저장소인지 확인
         try:
-            git.Repo(folder)
+            git.Repo(current_path)
         except Exception as e:
             messagebox.showerror("오류", f"유효하지 않은 Git 저장소:\n{e}")
             return
 
+        # 이미 등록된 저장소인지 확인
+        repositories = self.config.get("repositories", [])
+        for repo in repositories:
+            if repo['path'] == current_path:
+                messagebox.showinfo("정보", "이미 등록된 저장소입니다")
+                return
+
         # 이름 입력받기
-        name = os.path.basename(folder)
-        name = tk.simpledialog.askstring("저장소 이름",
-                                         "저장소 이름을 입력하세요:",
-                                         initialvalue=name)
+        name = os.path.basename(current_path)
+        name = simpledialog.askstring("저장소 이름",
+                                     "저장소 이름을 입력하세요:",
+                                     initialvalue=name)
         if not name:
             return
 
-        # 중복 확인
-        repositories = self.config.get("repositories", [])
-        for repo in repositories:
-            if repo['path'] == folder:
-                messagebox.showwarning("경고", "이미 추가된 저장소입니다")
-                return
-
         # 추가
-        repositories.append({"name": name, "path": folder})
+        repositories.append({"name": name, "path": current_path})
         self.config["repositories"] = repositories
         self.save_config()
-        self.refresh_repo_list()
-        self.log_message(f"저장소 추가됨: {name} ({folder})", "success")
-        messagebox.showinfo("성공", f"저장소가 추가되었습니다: {name}")
+        self.refresh_repo_combo()
+        self.log_message(f"저장소 저장됨: {name} ({current_path})", "success")
+        messagebox.showinfo("성공", f"저장소가 저장되었습니다: {name}")
 
-    def remove_repository(self):
-        """저장소 삭제"""
-        selection = self.repo_listbox.curselection()
-        if not selection:
+    def delete_current_repo(self):
+        """선택된 저장소를 리스트에서 삭제"""
+        selected = self.repo_combo_var.get()
+
+        if not selected or selected == "🌐 ALL":
             messagebox.showwarning("경고", "삭제할 저장소를 선택해주세요")
             return
 
-        idx = selection[0]
+        # 선택된 저장소 찾기
         repositories = self.config.get("repositories", [])
+        for idx, repo in enumerate(repositories):
+            display_text = f"{repo['name']} - {repo['path']}"
+            if selected == display_text:
+                # 삭제 확인
+                confirm = messagebox.askyesno("확인",
+                                            f"'{repo['name']}' 저장소를 삭제하시겠습니까?\n(실제 파일은 삭제되지 않습니다)")
+                if not confirm:
+                    return
 
-        if idx >= len(repositories):
-            return
+                # 삭제
+                removed_repo = repositories.pop(idx)
+                self.config["repositories"] = repositories
 
-        repo = repositories[idx]
-        confirm = messagebox.askyesno("확인",
-                                      f"'{repo['name']}' 저장소를 삭제하시겠습니까?\n(실제 파일은 삭제되지 않습니다)")
-        if not confirm:
-            return
+                # 현재 선택된 저장소인 경우 초기화
+                if self.config.get("repo_path") == repo['path']:
+                    self.repo = None
+                    self.config["repo_path"] = ""
 
-        # 현재 선택된 저장소인 경우 초기화
-        current_index = self.config.get("current_repo_index", -1)
-        if current_index == idx:
-            self.config["current_repo_index"] = -1
-            self.config["repo_path"] = ""
-            self.repo = None
-            self.path_var.set("")
-        elif current_index > idx:
-            self.config["current_repo_index"] = current_index - 1
+                self.save_config()
+                self.refresh_repo_combo()
+                self.log_message(f"저장소 삭제됨: {removed_repo['name']}", "info")
+                messagebox.showinfo("성공", "저장소가 삭제되었습니다")
+                return
 
-        # 삭제
-        removed_repo = repositories.pop(idx)
-        self.config["repositories"] = repositories
-        self.save_config()
-        self.refresh_repo_list()
-        self.log_message(f"저장소 삭제됨: {removed_repo['name']}", "info")
-        messagebox.showinfo("성공", "저장소가 삭제되었습니다")
-
-    def select_repository(self):
-        """저장소 선택"""
-        selection = self.repo_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("경고", "선택할 저장소를 클릭해주세요")
-            return
-
-        idx = selection[0]
-        repositories = self.config.get("repositories", [])
-
-        if idx >= len(repositories):
-            return
-
-        repo = repositories[idx]
-        self.config["current_repo_index"] = idx
-        self.config["repo_path"] = repo['path']
-        self.save_config()
-        self.set_repo_path(repo['path'])
-        self.refresh_repo_list()
-        messagebox.showinfo("성공", f"'{repo['name']}' 저장소가 선택되었습니다")
+        messagebox.showerror("오류", "저장소를 찾을 수 없습니다")
 
     def pull_all_repos(self):
         """전체 저장소 Pull"""
@@ -609,6 +660,129 @@ class GitManager:
         self.log_message(summary, "success" if fail_count == 0 else "info")
         messagebox.showinfo("완료",
                           f"전체 Push가 완료되었습니다\n성공: {success_count}개\n실패: {fail_count}개\n건너뜀: {skip_count}개")
+
+    # 시스템 트레이 및 자동 시작 기능
+    def on_closing(self):
+        """윈도우 닫기 이벤트 처리"""
+        if self.config.get("minimize_to_tray", False):
+            # 백그라운드 실행 설정이 켜져있으면 트레이로 최소화
+            self.minimize_to_system_tray()
+        else:
+            # 일반 종료
+            self.quit_app()
+
+    def minimize_to_system_tray(self):
+        """시스템 트레이로 최소화"""
+        self.root.withdraw()  # 윈도우 숨기기
+        self.minimized_to_tray = True
+
+        if not self.tray_icon:
+            # 트레이 아이콘 생성
+            self.create_tray_icon()
+
+        self.log_message("백그라운드로 실행 중 (시스템 트레이)", "info")
+
+    def create_tray_icon(self):
+        """시스템 트레이 아이콘 생성"""
+        # 간단한 아이콘 이미지 생성 (G 문자)
+        image = Image.new('RGB', (64, 64), color='white')
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 0, 63, 63], fill='#2196F3')
+        draw.text((10, 10), 'GM', fill='white')
+
+        # 트레이 메뉴
+        menu = pystray.Menu(
+            pystray.MenuItem("열기", self.show_from_tray),
+            pystray.MenuItem("종료", self.quit_from_tray)
+        )
+
+        # 트레이 아이콘 생성
+        self.tray_icon = pystray.Icon("GitManager", image, "Git Manager", menu)
+
+        # 백그라운드 스레드에서 실행
+        tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+        tray_thread.start()
+
+    def show_from_tray(self, icon=None, item=None):
+        """트레이에서 윈도우 복원"""
+        self.root.deiconify()  # 윈도우 보이기
+        self.root.lift()  # 맨 앞으로
+        self.minimized_to_tray = False
+
+        if self.tray_icon:
+            self.tray_icon.stop()
+            self.tray_icon = None
+
+    def quit_from_tray(self, icon=None, item=None):
+        """트레이에서 종료"""
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.quit_app()
+
+    def quit_app(self):
+        """프로그램 종료"""
+        # 자동 동기화 중지
+        if self.sync_running:
+            self.stop_auto_sync()
+
+        # 트레이 아이콘 정리
+        if self.tray_icon:
+            self.tray_icon.stop()
+
+        self.log_message("Git Manager 종료", "info")
+        self.root.quit()
+        self.root.destroy()
+
+    def enable_auto_start(self):
+        """Windows 시작 시 자동 실행 활성화"""
+        try:
+            # 실행 파일 경로
+            if getattr(sys, 'frozen', False):
+                # PyInstaller로 빌드된 경우
+                exe_path = sys.executable
+            else:
+                # 개발 환경
+                exe_path = os.path.abspath(sys.argv[0])
+
+            # 레지스트리 키 열기
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE
+            )
+
+            # 레지스트리에 등록
+            winreg.SetValueEx(key, "GitManager", 0, winreg.REG_SZ, exe_path)
+            winreg.CloseKey(key)
+
+            self.log_message("자동 시작 활성화됨", "success")
+        except Exception as e:
+            self.log_message(f"자동 시작 설정 오류: {e}", "error")
+            messagebox.showerror("오류", f"자동 시작 설정 실패:\n{e}")
+
+    def disable_auto_start(self):
+        """Windows 시작 시 자동 실행 비활성화"""
+        try:
+            # 레지스트리 키 열기
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE
+            )
+
+            # 레지스트리에서 삭제
+            try:
+                winreg.DeleteValue(key, "GitManager")
+                self.log_message("자동 시작 비활성화됨", "info")
+            except FileNotFoundError:
+                # 이미 없는 경우
+                pass
+
+            winreg.CloseKey(key)
+        except Exception as e:
+            self.log_message(f"자동 시작 해제 오류: {e}", "error")
 
 
 def main():

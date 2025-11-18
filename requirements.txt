@@ -1,3 +1,5 @@
 gitpython==3.1.40
 schedule==1.2.0
 pyinstaller==6.3.0
+pystray==0.19.5
+pillow==10.1.0

@@ -3,7 +3,12 @@
     "allow": [
       "Bash(git init:*)",
       "Bash(git remote add:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(python git_manager.py:*)",
+      "Bash(pip install:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd version management system\n\n변경사항:\n- git_manager.py에 __version__ 변수 추가\n- 프로그램 타이틀에 버전 표시 (Git Manager v2.0)\n- build_exe.bat 개선:\n  * 자동으로 버전 정보 읽어서 파일명에 적용\n  * GitManager_v{VERSION}.exe 형식으로 빌드\n  * 한글 메시지 출력 지원 (chcp 65001)\n  * 빌드 결과 파일 정보 표시\n\n이제 버전 업데이트 시:\n1. git_manager.py의 __version__ 수정\n2. build_exe.bat 실행\n3. 자동으로 GitManager_v{VERSION}.exe 생성\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(pyinstaller:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

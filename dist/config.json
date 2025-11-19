@@ -1,28 +1,16 @@
 {
-  "repo_path": "C:/Users/minhy/project/obsidian_gitmanager",
+  "repo_path": "C:/Users/minhy/llm/git-manager",
   "commit_message": "update",
   "auto_sync_enabled": false,
   "pull_time": "09:00",
   "push_time": "18:00",
   "repositories": [
     {
-      "name": "semoR",
-      "path": "C:/Users/minhy/project/semoR"
-    },
-    {
-      "name": "LibrarianK",
-      "path": "C:/Users/minhy/project/LibrarianK"
-    },
-    {
-      "name": "obsidian_gitmanager",
-      "path": "C:/Users/minhy/project/obsidian_gitmanager"
-    },
-    {
-      "name": "MNsYH",
-      "path": "C:/Users/minhy/project/MNsYH"
+      "name": "git-manager",
+      "path": "C:/Users/minhy/llm/git-manager"
     }
   ],
   "current_repo_index": -1,
   "minimize_to_tray": true,
-  "auto_start": false
+  "auto_start": true
 }

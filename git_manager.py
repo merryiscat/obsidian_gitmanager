@@ -4,7 +4,7 @@
 Git Manager - Git 작업을 위한 간단한 GUI 프로그램
 """
 
-__version__ = "2.3"
+__version__ = "2.4"
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
@@ -27,8 +27,10 @@ class GitManager:
         self.root.title(f"Git Manager v{__version__}")
         self.root.geometry("800x600")
 
-        # 설정
-        self.config_file = "config.json"
+        # 설정 파일 경로 (사용자 AppData 폴더 사용)
+        appdata_dir = os.path.join(os.getenv('APPDATA'), 'GitManager')
+        os.makedirs(appdata_dir, exist_ok=True)
+        self.config_file = os.path.join(appdata_dir, 'config.json')
         self.config = self.load_config()
         self.repo = None
 
